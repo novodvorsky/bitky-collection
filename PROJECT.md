@@ -22,7 +22,8 @@ Features:
 - Compact coin list: battle-side thumbnail, name, years, and a circle to tick "owned"
 - Search (accent-insensitive) and All / Collected / Missing filter
 - Detail sheet per coin: swipeable photos, full-screen viewer, specs, link to mint.sk
-- **Export PDF:** a single A4 page listing owned coins, no photos (jsPDF, loaded on demand)
+- **Export PDF:** an action sheet offers three single A4 pages, no photos (jsPDF, loaded on demand):
+  **Missing Coins**, **My Collection**, or **Full Checklist** (see section 5a)
 - **Sync:** checkmarks saved to the private `bitky-data` repo, merged across phones
 - **Backup / Restore:** JSON file as a manual safety copy
 - Light/dark mode, Dynamic Type, reduced motion and transparency, Android Back button closes sheets
@@ -149,13 +150,31 @@ When it expires, make a new one and paste it in Collection → Sync on each phon
 - **Blur** only on floating bars (tab bar, sticky search); turned off under reduced transparency.
 - **Signature:** the coin tray. Everything else stays quiet, system-like.
 
+## 5a. PDF export
+
+Tapping **Export PDF** opens an iOS-style action sheet (Android Back and Escape close it):
+
+| Option | Contents | File name |
+| --- | --- | --- |
+| Missing Coins | coins not owned, with an empty tick box; per series "N missing of M" | `bitky-missing-YYYY-MM-DD.pdf` |
+| My Collection | owned coins only | `bitky-collection-YYYY-MM-DD.pdf` |
+| Full Checklist | every coin with a ticked or empty box; per series "N of M owned" | `bitky-checklist-YYYY-MM-DD.pdf` |
+
+- Columns: (box), No., Battle, Year, Issued, Mintage. Coins with a `status` (not yet released) get a grey "(upcoming)".
+- An option is greyed out when its list would be empty, with the reason underneath.
+- The last choice is saved in `ui.exportKind` and listed first next time.
+- Always one page: row height shrinks only if a list ever grows past one page.
+- Built-in PDF fonts cover Latin-1 only, so letters like ň print as n (`pdfText`). English battle names avoid this.
+- Code: `EXPORTS`, `exportPdf(kind)`, `openActions` in `index.html`.
+
 ## 6. Testing checklist
 
 - Phone widths 375 and 393 px, light and dark: no horizontal scroll, tray of 5×3, list readable
 - Tick and untick, then reload: state persists
 - Search "mohac" finds Mohács; Collected and Missing filters show empty-state text
 - Open a coin, swipe photos, open full screen, Android Back closes it
-- Export PDF: one page with all 17 coins ticked
+- Export PDF: each of the three options gives one page with the right coins; an empty option is greyed out;
+  the last choice appears first; the Full Checklist stays one page with all 17 coins
 - Sync: wrong token shows "GitHub rejected that token", a change appears in `bitky-data` within seconds,
   the other phone picks it up on reopen
 

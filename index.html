@@ -182,6 +182,22 @@ button.cell:active { background: var(--fill); }
 .own-toggle { margin-top: 1.25rem; }
 .own-toggle[aria-pressed="true"] { background: var(--surface); color: var(--owned); }
 
+/* ---------- Action sheet (export choice) ---------- */
+.actions { position: fixed; left: 0; right: 0; bottom: 0; z-index: 32; margin: 0 auto; max-width: 28rem;
+           padding: 0 .5rem calc(env(safe-area-inset-bottom) + .5rem); transform: translateY(110%); visibility: hidden;
+           transition: transform .32s cubic-bezier(.32,.72,0,1), visibility 0s .32s; }
+.actions.open { transform: translateY(0); visibility: visible; transition: transform .32s cubic-bezier(.32,.72,0,1); }
+.actions-group { display: block; width: 100%; background: var(--surface); border-radius: .875rem; overflow: hidden; margin-top: .5rem; }
+.actions-title { margin: 0; padding: .875rem 1rem .75rem; text-align: center; font-size: .8125rem; font-weight: 600; color: var(--label-2); border-bottom: .5px solid var(--separator); }
+.action-btn { display: block; width: 100%; padding: .75rem 1rem; min-height: 3.5rem; text-align: center; color: var(--accent); }
+.action-btn + .action-btn { border-top: .5px solid var(--separator); }
+.action-btn:active { background: var(--fill); }
+.action-btn:disabled { color: var(--label-2); cursor: default; }
+.action-label { display: block; font-size: 1.1875rem; }
+.action-note { display: block; font-size: .8125rem; color: var(--label-2); margin-top: .125rem; }
+.action-cancel { min-height: 3.5rem; font-size: 1.1875rem; font-weight: 600; color: var(--accent); }
+.action-cancel:active { background: var(--fill); }
+
 /* ---------- Full-screen viewer ---------- */
 .viewer { position: fixed; inset: 0; z-index: 40; background: #000; display: none; flex-direction: column; }
 .viewer.open { display: flex; }
@@ -249,7 +265,7 @@ button.cell:active { background: var(--fill); }
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5"/><path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
       Export PDF
     </button>
-    <p class="footnote" id="exportNote">A single A4 page listing the coins you own. No photos.</p>
+    <p class="footnote" id="exportNote">A single A4 page, no photos: your missing coins, your collection, or the full checklist.</p>
 
     <h2 class="section-title">Sync</h2>
     <div id="syncBox"></div>
@@ -306,6 +322,16 @@ button.cell:active { background: var(--fill); }
 <div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="Photos">
   <div class="viewer-bar"><span id="viewerCount"></span><button id="viewerClose">Done</button></div>
   <div class="viewer-track" id="viewerTrack"></div>
+</div>
+
+<!-- Export choice (action sheet) -->
+<div class="scrim" id="actionsScrim"></div>
+<div class="actions" id="actions" role="dialog" aria-modal="true" aria-labelledby="actionsTitle">
+  <div class="actions-group">
+    <p class="actions-title" id="actionsTitle">Export PDF</p>
+    <div id="actionsList"></div>
+  </div>
+  <button class="actions-group action-cancel" id="actionsCancel">Cancel</button>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -502,10 +528,6 @@ function renderCollection() {
       <span class="meter" aria-hidden="true"><i style="width:${n ? h / n * 100 : 0}%"></i></span>
     </button>`;
   }).join('');
-  $('#exportPdf').disabled = total === 0;
-  $('#exportNote').textContent = total === 0
-    ? 'Mark at least one coin as collected to export your list.'
-    : `A single A4 page listing your ${total} ${total === 1 ? 'coin' : 'coins'}. No photos.`;
 }
 
 function render() {
@@ -677,7 +699,7 @@ async function deliver(blob, filename, title) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
-/* ---------- One-page PDF of owned coins ---------- */
+/* ---------- One-page PDF: missing coins, my collection, or full checklist ---------- */
 function loadJsPDF() {
   if (window.jspdf) return Promise.resolve();
   return new Promise((res, rej) => {
@@ -690,9 +712,17 @@ function loadJsPDF() {
 // Built-in PDF fonts cover Latin-1 only; strip accents that fall outside it (e.g. č → c).
 const pdfText = (s) => String(s).replace(/[–—]/g, '-').replace(/[’‘]/g, "'").replace(/[^\u0000-ÿ]/g, ch => ch.normalize('NFD').replace(/[̀-ͯ]/g, '') || '');
 
-async function exportPdf() {
-  const mine = COINS.filter(c => owned[c.id]);
-  if (!mine.length) return;
+const EXPORTS = {
+  missing:   { label: 'Missing Coins', file: 'missing',    pick: (c) => !owned[c.id] },
+  owned:     { label: 'My Collection', file: 'collection', pick: (c) => !!owned[c.id] },
+  checklist: { label: 'Full Checklist', file: 'checklist', pick: () => true },
+};
+const isUpcoming = (c) => !!c.status;
+
+async function exportPdf(kind) {
+  const spec = EXPORTS[kind];
+  const list = COINS.filter(spec.pick);
+  if (!list.length) return;
   const btn = $('#exportPdf'); btn.disabled = true;
   try { await loadJsPDF(); }
   catch { btn.disabled = false; toast('Couldn’t load the PDF tool. Check your connection and try again.'); return; }
@@ -700,38 +730,62 @@ async function exportPdf() {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const W = 210, M = 20; let y = 24;
-  const groups = Object.keys(SERIES).map(k => ({ k, coins: mine.filter(c => c.series === k) })).filter(g => g.coins.length);
-  // Shrink rows only if a very large list would spill past one page.
-  const rowsNeeded = mine.length + groups.length * 3;
-  const rowH = Math.min(7.2, (297 - 70) / rowsNeeded);
+  const groups = Object.keys(SERIES).map(k => ({ k, coins: list.filter(c => c.series === k) })).filter(g => g.coins.length);
+  // Rows shrink only if a very long list would spill past one page.
+  const rowH = Math.min(7.2, (297 - 70) / (list.length + groups.length * 3));
   const fs = Math.max(7, Math.min(10, rowH * 1.35));
+  const ownedCount = COINS.filter(c => owned[c.id]).length;
+  const n = (k, word) => `${k} ${k === 1 ? word : word + 's'}`;
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(0);
   doc.text(pdfText('Bitky v dejinách sveta'), M, y);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(100);
   y += 6.5;
   const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  doc.text(pdfText(`My collection · ${mine.length} ${mine.length === 1 ? 'coin' : 'coins'} · ${date}`), M, y);
+  const sub = kind === 'missing' ? `Missing coins · ${n(list.length, 'coin')} still to find`
+            : kind === 'owned' ? `My collection · ${n(list.length, 'coin')}`
+            : `Full checklist · ${ownedCount} of ${COINS.length} owned`;
+  doc.text(pdfText(`${sub} · ${date}`), M, y);
   y += 4; doc.setDrawColor(0); doc.setLineWidth(.4); doc.line(M, y, W - M, y); y += 8;
 
-  const col = { no: M, name: M + 10, year: 122, issue: 148, mint: W - M };
+  const box = kind !== 'owned';              // tick boxes on the missing list and the checklist
+  const col = { box: M, no: box ? M + 7 : M, name: box ? M + 16 : M + 10, year: 124, issue: 150, mint: W - M };
   for (const g of groups) {
-    const total = seriesCoins(g.k).length;
+    const all = seriesCoins(g.k), have = all.filter(c => owned[c.id]).length, s = SERIES[g.k];
+    const head = kind === 'missing' ? `${s.title} — ${g.coins.length} missing of ${all.length}${s.total ? '' : ' announced'}`
+               : `${s.title} — ${have} of ${all.length}${s.total ? '' : ' announced'} owned`;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11.5); doc.setTextColor(0);
-    doc.text(pdfText(`${SERIES[g.k].title} — ${g.coins.length} of ${total}${SERIES[g.k].total ? '' : ' announced'}`), M, y);
+    doc.text(pdfText(head), M, y);
     y += 5.5;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
     doc.text('NO.', col.no, y); doc.text('BATTLE', col.name, y); doc.text('YEAR', col.year, y); doc.text('ISSUED', col.issue, y); doc.text('MINTAGE', col.mint, y, { align: 'right' });
     y += 1.8; doc.setDrawColor(190); doc.setLineWidth(.2); doc.line(M, y, W - M, y);
-    doc.setFontSize(fs); doc.setTextColor(0);
     for (const c of g.coins) {
       y += rowH;
-      doc.text(String(c.no), col.no, y - rowH * .3);
-      doc.text(pdfText(c.name), col.name, y - rowH * .3, { maxWidth: col.year - col.name - 4 });
-      doc.text(pdfText(c.year), col.year, y - rowH * .3);
-      doc.text(String(c.issue), col.issue, y - rowH * .3);
-      doc.text(String(c.mintage), col.mint, y - rowH * .3, { align: 'right' });
-      doc.setDrawColor(225); doc.line(M, y, W - M, y);
+      const base = y - rowH * .3;
+      doc.setFontSize(fs); doc.setTextColor(0);
+      if (box) {
+        const sz = 3.4, by = base - sz + .4;
+        doc.setDrawColor(60); doc.setLineWidth(.3); doc.rect(col.box, by, sz, sz);
+        if (owned[c.id]) {
+          doc.setLineWidth(.5);
+          doc.line(col.box + .7, by + 1.8, col.box + 1.5, by + 2.7);
+          doc.line(col.box + 1.5, by + 2.7, col.box + 2.9, by + .7);
+        }
+      }
+      doc.text(String(c.no), col.no, base);
+      const name = pdfText(c.name);
+      doc.text(name, col.name, base);
+      if (isUpcoming(c)) {
+        const x = col.name + doc.getTextWidth(name) + 2;
+        doc.setTextColor(120); doc.setFontSize(fs - 1.5);
+        doc.text('(upcoming)', x, base);
+        doc.setFontSize(fs); doc.setTextColor(0);
+      }
+      doc.text(pdfText(c.year), col.year, base);
+      doc.text(String(c.issue), col.issue, base);
+      doc.text(String(c.mintage), col.mint, base, { align: 'right' });
+      doc.setDrawColor(225); doc.setLineWidth(.2); doc.line(M, y, W - M, y);
     }
     y += 9;
   }
@@ -740,9 +794,46 @@ async function exportPdf() {
 
   const blob = doc.output('blob');
   btn.disabled = false;
-  await deliver(blob, `bitky-collection-${new Date().toISOString().slice(0, 10)}.pdf`, 'My Bitky collection');
+  await deliver(blob, `bitky-${spec.file}-${new Date().toISOString().slice(0, 10)}.pdf`, `Bitky ${spec.label.toLowerCase()}`);
 }
-$('#exportPdf').addEventListener('click', exportPdf);
+
+/* Export choice: an action sheet. The last choice is listed first. */
+const actions = $('#actions');
+function exportOptions() {
+  const missing = COINS.filter(EXPORTS.missing.pick).length, have = COINS.length - missing;
+  const opts = {
+    missing:   { n: missing, note: missing ? `${missing} ${missing === 1 ? 'coin' : 'coins'} you don’t have yet` : 'Nothing missing: you own every coin' },
+    owned:     { n: have,    note: have ? `${have} ${have === 1 ? 'coin' : 'coins'} you own` : 'Mark a coin as collected first' },
+    checklist: { n: COINS.length, note: `All ${COINS.length} coins, ticked or empty` },
+  };
+  const order = ['missing', 'owned', 'checklist'];
+  if (order.includes(ui.exportKind)) order.sort((a, b) => (b === ui.exportKind) - (a === ui.exportKind));
+  return order.map(k => Object.assign({ k }, opts[k]));
+}
+function openActions() {
+  $('#actionsList').innerHTML = exportOptions().map(o =>
+    `<button class="action-btn" data-export="${o.k}" ${o.n ? '' : 'disabled'}>
+       <span class="action-label">${EXPORTS[o.k].label}</span><span class="action-note">${o.note}</span>
+     </button>`).join('');
+  actions.classList.add('open'); $('#actionsScrim').classList.add('open');
+  history.pushState({ layer: 'actions' }, '');
+  setTimeout(() => { const f = actions.querySelector('.action-btn:not([disabled])'); if (f) f.focus({ preventScroll: true }); }, 50);
+}
+function closeActionsUI() { actions.classList.remove('open'); $('#actionsScrim').classList.remove('open'); $('#exportPdf').focus({ preventScroll: true }); }
+function closeActions() { if (history.state && history.state.layer === 'actions') history.back(); else closeActionsUI(); }
+
+$('#exportPdf').addEventListener('click', openActions);
+$('#actionsCancel').addEventListener('click', closeActions);
+$('#actionsScrim').addEventListener('click', closeActions);
+$('#actionsList').addEventListener('click', e => {
+  const b = e.target.closest('[data-export]'); if (!b || b.disabled) return;
+  const kind = b.dataset.export;
+  ui.exportKind = kind; store.set(UI_KEY, ui);
+  closeActions();
+  setTimeout(() => exportPdf(kind), 250);   // let the menu close before the share sheet opens
+});
+window.addEventListener('popstate', () => { if (actions.classList.contains('open')) closeActionsUI(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && actions.classList.contains('open')) closeActions(); });
 
 /* ---------- Backup / restore ---------- */
 $('#backup').addEventListener('click', () => {

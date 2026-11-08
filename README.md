@@ -15,7 +15,13 @@ Open the GitHub Pages link on your phone. To install it like an app:
 - **Android (Chrome):** ⋮ menu → Add to Home screen / Install app
 
 Tap the circle next to a coin to mark it as owned. Tap a coin to see its photos and details.
-The **Collection** tab exports a one-page PDF of the coins you own, and backs up or restores your checkmarks.
+The **Collection** tab backs up or restores your checkmarks and has **Export PDF**, which asks which one-page list you want:
+
+- **Missing Coins**: what you still need, with empty boxes to tick by hand (a shopping list for fairs and dealers)
+- **My Collection**: the coins you own
+- **Full Checklist**: every coin, ticked or empty
+
+Coins not released yet are marked *(upcoming)*. The app remembers your last choice and lists it first.
 
 ## Sync between phones
 
