@@ -27,6 +27,7 @@
   --accent: #0066d6;      /* 5.6:1 on white; white text on it 5.6:1 */
   --owned: #248a3d;       /* check fill, white glyph 4.6:1 */
   --on-owned: #ffffff;
+  --red: #d70015;         /* 5.8:1 on white */
   --silver-1: #f4f5f7;
   --silver-2: #a9aeb5;
   --silver-ink: #2c2f33;
@@ -45,6 +46,7 @@
     --accent: #409cff;    /* 6.2:1 on surface; black text on it 7.5:1 */
     --owned: #30d158;
     --on-owned: #000000;
+    --red: #ff6961;       /* 6.0:1 on #1c1c1e */
     --silver-1: #d9dce0;
     --silver-2: #7d838a;
     --silver-ink: #15171a;
@@ -133,6 +135,13 @@ h1 { font-size: 2.125rem; line-height: 1.15; font-weight: 700; letter-spacing: -
 button.cell:active { background: var(--fill); }
 .cell .value { color: var(--label-2); font-variant-numeric: tabular-nums; text-align: right; }
 .cell.action { color: var(--accent); }
+.cell.destructive { color: var(--red); }
+.cell:disabled { color: var(--label-2); }
+.field-label { display: block; font-size: .8125rem; color: var(--label-2); }
+.field { display: block; width: 100%; border: 0; outline: none; background: transparent; padding: .25rem 0 0; font-size: max(16px, 1.0625rem); }
+.field::placeholder { color: var(--label-2); }
+.sync-mini { text-align: center; margin: .25rem 0 0; font-size: .8125rem; color: var(--label-2); }
+.warn { color: var(--red) !important; }
 .footnote { font-size: .8125rem; color: var(--label-2); margin: .5rem 1rem 0; }
 .btn-primary { display: flex; align-items: center; justify-content: center; gap: .5rem; width: 100%; min-height: 3.125rem; border-radius: .875rem; background: var(--accent); color: #fff; font-weight: 600; font-size: 1.0625rem; }
 @media (prefers-color-scheme: dark) { .btn-primary { color: #000; } }
@@ -205,6 +214,7 @@ button.cell:active { background: var(--fill); }
     <div class="tray-card">
       <div class="tray" id="tray" role="list" aria-label="Coin tray"></div>
       <p class="tray-stat" id="trayStat" aria-live="polite"></p>
+      <p class="sync-mini" id="syncMini" hidden></p>
     </div>
 
     <div class="controls">
@@ -240,6 +250,9 @@ button.cell:active { background: var(--fill); }
       Export PDF
     </button>
     <p class="footnote" id="exportNote">A single A4 page listing the coins you own. No photos.</p>
+
+    <h2 class="section-title">Sync</h2>
+    <div id="syncBox"></div>
 
     <h2 class="section-title">Backup</h2>
     <div class="group">
@@ -364,15 +377,31 @@ const SERIES = {
 };
 
 /* ------------------------------------------------------------------
-   State (same storage key as the first version, so checkmarks carry over)
+   State
+   entries = { coinId: { o: 1 | 0, t: timeOfChange } }. Keeping removals
+   with a time lets two phones merge: the newest change per coin wins.
 ------------------------------------------------------------------ */
-const KEY = 'bitky-v-dejinach-sveta:v1';
+const KEY = 'bitky-v-dejinach-sveta:v1';   // first version: { coinId: 'YYYY-MM-DD' }
+const KEY2 = 'bitky-v-dejinach-sveta:v2';
 const UI_KEY = 'bitky-v-dejinach-sveta:ui2';
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
 };
-let owned = store.get(KEY, {});
+let entries = store.get(KEY2, null);
+if (!entries) {
+  entries = {};
+  for (const [id, d] of Object.entries(store.get(KEY, {}))) entries[id] = { o: 1, t: Date.parse(d) || 1 };
+  store.set(KEY2, entries);
+}
+let owned = {};
+function rebuildOwned() {
+  owned = {};
+  for (const [id, e] of Object.entries(entries)) if (e && e.o) owned[id] = new Date(e.t).toISOString().slice(0, 10);
+}
+function saveLocal() { store.set(KEY2, entries); rebuildOwned(); }
+rebuildOwned();
 let ui = Object.assign({ tab: 'I', filter: 'all' }, store.get(UI_KEY, {}));
 let query = '';
 
@@ -485,9 +514,10 @@ function render() {
 }
 
 function setOwned(id, value) {
-  if (value) owned[id] = new Date().toISOString().slice(0, 10); else delete owned[id];
-  store.set(KEY, owned);
+  entries[id] = { o: value ? 1 : 0, t: Date.now() };
+  saveLocal();
   if (navigator.vibrate) try { navigator.vibrate(8); } catch {}
+  scheduleSync();
 }
 
 /* ------------------------------------------------------------------
@@ -716,7 +746,7 @@ $('#exportPdf').addEventListener('click', exportPdf);
 
 /* ---------- Backup / restore ---------- */
 $('#backup').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify({ app: 'bitky-v-dejinach-sveta', owned, saved: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ app: 'bitky-v-dejinach-sveta', owned, coins: entries, saved: new Date().toISOString() }, null, 2)], { type: 'application/json' });
   deliver(blob, 'bitky-backup.json', 'Bitky backup');
 });
 $('#restore').addEventListener('click', () => $('#restoreFile').click());
@@ -728,11 +758,161 @@ $('#restoreFile').addEventListener('change', async e => {
     if (!data || typeof data.owned !== 'object') throw 0;
     const n = Object.keys(data.owned).length;
     if (!confirm(`Replace your current checkmarks with the ${n} ${n === 1 ? 'coin' : 'coins'} in this backup?`)) return;
-    owned = data.owned; store.set(KEY, owned); render(); toast('Backup restored');
+    // A restore is a fresh decision for every coin, so it wins over older changes on other phones.
+    const now = Date.now();
+    for (const c of COINS) entries[c.id] = { o: data.owned[c.id] ? 1 : 0, t: now };
+    saveLocal(); render(); scheduleSync(300); toast('Backup restored');
   } catch { toast('That file isn’t a Bitky backup. Choose a bitky-backup.json file.'); }
 });
 
+/* ------------------------------------------------------------------
+   Sync with the private GitHub repo (novodvorsky/bitky-data)
+   The token lives only on this phone. Every change saves locally first,
+   then is pushed. On open, the remote file is pulled and merged.
+------------------------------------------------------------------ */
+const SYNC = { repo: 'novodvorsky/bitky-data', path: 'collection.json', key: 'bitky-v-dejinach-sveta:sync' };
+let syncCfg = store.get(SYNC.key, null);          // { token, last }
+const sync = { busy: false, again: false, timer: null, status: syncCfg ? 'idle' : 'off' };
+const b64enc = (s) => btoa(unescape(encodeURIComponent(s)));
+const b64dec = (s) => decodeURIComponent(escape(atob(s.replace(/\s/g, ''))));
+
+function ghContents(method, body) {
+  return fetch(`https://api.github.com/repos/${SYNC.repo}/contents/${SYNC.path}`, {
+    method, cache: 'no-store',
+    headers: Object.assign({ Authorization: `Bearer ${syncCfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+      body ? { 'Content-Type': 'application/json' } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+function failFor(status) { return status === 401 ? 'auth' : (status === 403 || status === 404) ? 'repo' : 'server'; }
+
+// Newest change per coin wins. Returns whether local changed and whether remote needs our data.
+function mergeRemote(remote) {
+  let changedLocal = false, needPush = false;
+  for (const id of new Set([...Object.keys(entries), ...Object.keys(remote)])) {
+    const l = entries[id], r = remote[id];
+    if (r && (!l || r.t > l.t)) { entries[id] = { o: r.o ? 1 : 0, t: r.t }; changedLocal = true; }
+    else if (l && (!r || l.t > r.t || l.o !== r.o)) needPush = true;
+  }
+  return { changedLocal, needPush };
+}
+
+async function syncNow(attempt = 0) {
+  if (!syncCfg) return;
+  if (sync.busy) { sync.again = true; return; }
+  if (!navigator.onLine) { setSyncStatus('offline'); return; }
+  sync.busy = true; setSyncStatus('syncing');
+  let result = 'ok', retry = false;
+  try {
+    const r = await ghContents('GET');
+    let sha, remote = {};
+    if (r.ok) {
+      const j = await r.json(); sha = j.sha;
+      try { remote = JSON.parse(b64dec(j.content)).coins || {}; } catch { remote = {}; }
+    } else if (r.status !== 404) throw failFor(r.status);
+
+    const { changedLocal, needPush } = mergeRemote(remote);
+    if (changedLocal) { saveLocal(); if (!sheet.classList.contains('open')) render(); }
+
+    if (needPush || !sha) {
+      const doc = { app: 'bitky-v-dejinach-sveta', updated: new Date().toISOString(), coins: entries };
+      const p = await ghContents('PUT', { message: 'Update collection', content: b64enc(JSON.stringify(doc, null, 1) + '\n'), ...(sha ? { sha } : {}) });
+      if ((p.status === 409 || p.status === 422) && attempt < 2) retry = true;   // the other phone saved first: merge again
+      else if (!p.ok) throw failFor(p.status);
+    }
+    if (!retry) { syncCfg.last = Date.now(); store.set(SYNC.key, syncCfg); }
+  } catch (e) {
+    // fetch throws TypeError when there is no connection at all
+    result = typeof e === 'string' ? e : (e instanceof TypeError || !navigator.onLine) ? 'offline' : 'server';
+  } finally {
+    sync.busy = false;
+  }
+  if (retry) return syncNow(attempt + 1);
+  setSyncStatus(result);
+  if (sync.again) { sync.again = false; scheduleSync(300); }
+  else if (result === 'offline' || result === 'server') scheduleSync(30000);   // try again on its own
+}
+function scheduleSync(ms = 1200) {
+  if (!syncCfg) return;
+  clearTimeout(sync.timer); sync.timer = setTimeout(() => syncNow(), ms);
+}
+
+function syncLabel() {
+  const s = sync.status;
+  if (s === 'syncing') return 'Syncing…';
+  if (s === 'offline') return 'Offline · will sync later';
+  if (s === 'auth') return 'Token rejected';
+  if (s === 'repo') return 'Can’t reach bitky-data';
+  if (s === 'server') return 'GitHub unavailable · will retry';
+  if (syncCfg && syncCfg.last) {
+    const d = new Date(syncCfg.last), today = d.toDateString() === new Date().toDateString();
+    return 'Synced ' + (today ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { day: 'numeric', month: 'short' }));
+  }
+  return 'Not synced yet';
+}
+function setSyncStatus(s) {
+  const was = sync.status; sync.status = s;
+  const mini = $('#syncMini');
+  if (mini) { mini.hidden = !syncCfg; mini.textContent = syncCfg ? syncLabel() : ''; mini.classList.toggle('warn', ['auth', 'repo'].includes(s)); }
+  const st = $('#syncStatus'); if (st) st.textContent = syncLabel();
+  if ((s === 'auth' || s === 'repo') && was !== s) toast(s === 'auth' ? 'Sync stopped: the GitHub token was rejected. Open Collection to fix it.' : 'Sync stopped: this token can’t reach bitky-data.');
+}
+
+function renderSync() {
+  const box = $('#syncBox');
+  if (!syncCfg) {
+    box.innerHTML = `
+      <div class="group">
+        <label class="cell" style="display:block">
+          <span class="field-label">GitHub access token</span>
+          <input id="tokenInput" class="field" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="github_pat_…" enterkeyhint="done">
+        </label>
+        <button class="cell action" id="connectBtn">Connect This Phone</button>
+      </div>
+      <p class="footnote" id="syncNote">Saves your checkmarks to your private repo <strong>bitky-data</strong> so both phones stay in step. Paste the token once on each phone.</p>`;
+  } else {
+    box.innerHTML = `
+      <div class="group">
+        <div class="cell"><span>Status</span><span class="value" id="syncStatus">${syncLabel()}</span></div>
+        <button class="cell action" id="syncNowBtn">Sync Now</button>
+        <button class="cell destructive" id="disconnectBtn">Disconnect This Phone</button>
+      </div>
+      <p class="footnote">Checkmarks save on this phone first, then to the private repo <strong>bitky-data</strong>. Changes from your other phone arrive when you open the app.</p>`;
+  }
+}
+
+$('#syncBox').addEventListener('click', async e => {
+  if (e.target.closest('#connectBtn')) {
+    const token = $('#tokenInput').value.trim();
+    if (!token) { $('#tokenInput').focus(); return; }
+    syncCfg = { token, last: 0 }; store.set(SYNC.key, syncCfg);
+    const btn = e.target.closest('#connectBtn'); btn.textContent = 'Connecting…'; btn.disabled = true;
+    await syncNow();
+    if (sync.status === 'auth' || sync.status === 'repo' || sync.status === 'server') {
+      const why = sync.status === 'auth' ? 'GitHub rejected that token. Check that you copied all of it.'
+        : sync.status === 'repo' ? 'That token can’t read and write bitky-data. Check its repository access and the Contents permission.'
+        : 'Couldn’t reach GitHub. Check your connection and try again.';
+      syncCfg = null; store.del(SYNC.key); sync.status = 'off';
+      renderSync(); $('#syncNote').textContent = why; $('#syncNote').classList.add('warn');
+      return;
+    }
+    renderSync(); setSyncStatus(sync.status); toast('This phone is now syncing');
+    return;
+  }
+  if (e.target.closest('#syncNowBtn')) { syncNow(); return; }
+  if (e.target.closest('#disconnectBtn')) {
+    if (!confirm('Stop syncing on this phone? Your checkmarks stay here, and you’ll need the token to reconnect.')) return;
+    syncCfg = null; store.del(SYNC.key); sync.status = 'off'; renderSync(); setSyncStatus('off');
+  }
+});
+
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
+window.addEventListener('online', () => syncNow());
+
 render();
+renderSync();
+setSyncStatus(sync.status);
+syncNow();
 </script>
 </body>
 </html>

@@ -17,7 +17,25 @@ Open the GitHub Pages link on your phone. To install it like an app:
 Tap the circle next to a coin to mark it as owned. Tap a coin to see its photos and details.
 The **Collection** tab exports a one-page PDF of the coins you own, and backs up or restores your checkmarks.
 
-Checkmarks are stored in the browser on each phone. To move them to another phone, use **Back Up Data** on one phone and **Restore from Backup** on the other.
+## Sync between phones
+
+Checkmarks save on the phone first, then to the private repo `novodvorsky/bitky-data` (file `collection.json`).
+If both phones change something, the newest change for each coin wins.
+
+One-time setup:
+
+1. On GitHub, open **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
+   (direct link: https://github.com/settings/personal-access-tokens/new).
+2. Name it `Bitky phones` and pick the longest expiration offered.
+3. **Repository access:** *Only select repositories* → `bitky-data`.
+4. **Permissions → Repository permissions → Contents:** *Read and write*.
+5. Generate the token and copy it.
+6. In the app, open **Collection → Sync**, paste the token, and tap **Connect This Phone**. Do this on each phone.
+
+The token can only read and write `bitky-data`. It is stored only on your phones. You can revoke it on GitHub at any time.
+When it expires, the app shows "Token rejected": make a new token and connect again.
+
+**Back Up Data** / **Restore from Backup** still work as a manual safety copy.
 
 ## Data
 
