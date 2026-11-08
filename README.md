@@ -42,4 +42,4 @@ When it expires, the app shows "Token rejected": make a new token and connect ag
 Coin details come from the Mincovňa Kremnica product pages and its 2021–2026 emission plans (checked November 2026).
 Photos load directly from mint.sk and remain © Mincovňa Kremnica.
 
-It's a single static `index.html` with no build step.
+It's a single static `index.html` with no build step. See [PROJECT.md](PROJECT.md) for the full documentation.
